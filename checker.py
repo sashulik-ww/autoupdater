@@ -1,4 +1,4 @@
-import base64
+6import base64
 import os
 import socket
 import urllib.parse
@@ -94,5 +94,5 @@ def main():
   )
 
 
-if __name__ == "__main__":
+  
   main()
