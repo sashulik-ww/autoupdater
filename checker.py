@@ -1,4 +1,4 @@
-6import base64
+import base64
 import os
 import socket
 import urllib.parse
@@ -18,7 +18,6 @@ def fetch_configs(url):
     with urllib.request.urlopen(req, timeout=15) as resp:
       content = resp.read().decode("utf-8", errors="ignore").strip()
 
-      # Пытаемся расшифровать Base64, если подписка заархивирована
       try:
         decoded = base64.b64decode(content).decode("utf-8", errors="ignore")
         if "://" in decoded:
@@ -37,7 +36,6 @@ def check_proxy(line):
   if not line or "://" not in line:
     return False
 
-  # Проверяем поддерживаемые протоколы
   if not line.startswith(
       ("vless://", "trojan://", "vmess://", "ss://", "hysteria2://", "hy2://")
   ):
@@ -48,10 +46,9 @@ def check_proxy(line):
     host = parsed.hostname
     port = parsed.port
     if not port:
-      port = 443  # Стандартный порт для защищенных соединений
+      port = 443
 
     if host and port:
-      # Быстрый TCP-тест доступности порта (таймаут 2 секунды)
       with socket.create_connection((host, int(port)), timeout=2.0):
         return True
   except Exception:
@@ -77,14 +74,11 @@ def main():
       working.append(line)
       print(f"[ЖИВ] {line[:35]}...")
 
-    # Ограничение по количеству рабочих нод (например, первые 150 живых)
     if len(working) >= 150:
       break
 
-  # Создаем папку vpn-configs-checked, если она еще не создана
   os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-  # Сохраняем результат в файл 1.txt внутри папки
   with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     f.write("\n".join(working))
 
@@ -94,5 +88,5 @@ def main():
   )
 
 
-  
+if __name__ == "__main__":
   main()
