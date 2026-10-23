@@ -26,15 +26,16 @@ TIMEOUT = float(os.getenv("TIMEOUT", "8"))
 CONCURRENCY = int(os.getenv("CONCURRENCY", "150"))
 XRAY_WORKERS = int(os.getenv("XRAY_WORKERS", "8"))
 XRAY_TIMEOUT = float(os.getenv("XRAY_TIMEOUT", "9"))
-MAX_XRAY_CANDIDATES = int(os.getenv("MAX_XRAY_CANDIDATES", "3000"))
+XRAY_RATIO = float(os.getenv("XRAY_RATIO", "0.85"))  # 85% от TCP
 
 OUT_DIR = Path(os.getenv("OUT_DIR", "results"))
 
-MAX_PER_COUNTRY = 25
-MAX_TOTAL_PER_PROTOCOL = 550
+MAX_PER_COUNTRY = 30
+MAX_TOTAL_PER_PROTOCOL = 400
+MAX_TOTAL_ALL = 650
 WHITE_MAX_PER_IP = 3
 WHITE_MAX_PER_COUNTRY = 25
-WHITE_MAX_TOTAL = 550
+WHITE_MAX_TOTAL = 400
 RU_MAX_PER_IP = 2
 RU_MAX_TOTAL = 250
 
@@ -507,8 +508,18 @@ async def check_xray(item: dict, port_q: asyncio.Queue) -> dict | None:
 
 
 # ====================== ФИЛЬТРЫ ======================
-def smart_filter(items, max_per_country=MAX_PER_COUNTRY, max_total=MAX_TOTAL_PER_PROTOCOL, unique_ip=True):
-    items = sorted(items, key=lambda x: x["latency_ms"])
+def smart_filter(
+    items,
+    max_per_country=MAX_PER_COUNTRY,
+    max_total=MAX_TOTAL_PER_PROTOCOL,
+    unique_ip=True,
+    deprioritize_ss=False,
+):
+    def sort_key(x):
+        ss_penalty = 1 if (deprioritize_ss and x.get("scheme") == "ss") else 0
+        return (ss_penalty, x["latency_ms"])
+
+    items = sorted(items, key=sort_key)
     seen_ips, country_counts, out = set(), defaultdict(int), []
     for it in items:
         if len(out) >= max_total:
@@ -612,8 +623,11 @@ async def main_async() -> int:
     tcp_alive = sorted([r for r in tcp_res if r], key=lambda x: x["latency_ms"])
     print(f"TCP alive: {len(tcp_alive)}")
 
-    candidates = [x for x in tcp_alive if x["scheme"] in XRAY_SUPPORTED][:MAX_XRAY_CANDIDATES]
-    print(f"Xray candidates: {len(candidates)}")
+    # 85% от TCP-живых (поддерживаемые протоколы) → Xray
+    xray_pool = [x for x in tcp_alive if x["scheme"] in XRAY_SUPPORTED]
+    take = max(1, int(len(xray_pool) * XRAY_RATIO))
+    candidates = xray_pool[:take]
+    print(f"Xray candidates ({int(XRAY_RATIO*100)}%): {len(candidates)}")
 
     xray_ok = []
     has_xray = subprocess.run([XRAY_BIN, "version"], capture_output=True).returncode == 0
@@ -632,6 +646,7 @@ async def main_async() -> int:
         xray_ok = [r for r in results if r]
         print(f"Xray OK: {len(xray_ok)}")
 
+    # Итог: Xray-OK + TCP для протоколов вне Xray (hysteria2 и т.д.)
     final_map = {x["raw"]: x for x in xray_ok}
     for item in tcp_alive:
         if item["scheme"] not in XRAY_SUPPORTED and item["raw"] not in final_map:
@@ -648,6 +663,7 @@ async def main_async() -> int:
         it["city"] = city
         it["proxy"] = format_clean_proxy(it["raw"], it["country"], it["city"])
 
+    # xray_all — все прошедшие Xray, уникальный IP
     seen_ips, xray_all = set(), []
     for it in sorted(xray_ok, key=lambda x: x["latency_ms"]):
         if it["ip"] and it["ip"] in seen_ips:
@@ -659,7 +675,8 @@ async def main_async() -> int:
     write_list(OUT_DIR / "xray_all.txt", xray_all)
     print(f"xray_all.txt: {len(xray_all)}")
 
-    main_list = smart_filter(final)
+    # all.txt — до 650, SS в конце
+    main_list = smart_filter(final, max_total=MAX_TOTAL_ALL, deprioritize_ss=True)
     write_list(OUT_DIR / "all.txt", main_list)
     write_list(OUT_DIR / "working_proxies.txt", main_list)
     print(f"all.txt: {len(main_list)}")
