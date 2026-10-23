@@ -1,1 +1,61 @@
+name: Check proxies
 
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: proxy-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Xray
+        run: |
+          XRAY_VERSION=$(curl -sL https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep -oP '"tag_name": "\K(.*)(?=")')
+          echo "Installing Xray $XRAY_VERSION"
+          wget -q "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" -O xray.zip
+          unzip -q xray.zip -d xray-bin
+          sudo mv xray-bin/xray /usr/local/bin/xray
+          chmod +x /usr/local/bin/xray
+          xray version
+
+      - name: Check proxies
+        env:
+          TIMEOUT: "8"
+          CONCURRENCY: "150"
+          XRAY_WORKERS: "8"
+          MAX_XRAY_CANDIDATES: "3000"
+          XRAY_TIMEOUT: "9"
+          SOURCE_URL: "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/All_Configs_Sub.txt"
+        run: python checker.py
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/
+          if git diff --cached --quiet; then
+            echo "Нет изменений"
+            exit 0
+          fi
+          git commit -m "Update proxies: $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git pull --rebase origin main || true
+          git push origin HEAD:main
